@@ -1,14 +1,13 @@
 # WuWa-AutoPatchReboot
 
-Tired of manually restarting Wuthering Waves after a patch, or missing the
-restart prompt because you weren't watching?
+Tired of manually restarting Wuthering Waves after a patch, or making a coffee only to come back to the damn restart prompt and now you have to wait more?
 
 This app watches the game window for you and automatically restarts it when
-it shows:
+it sees:
 
 > Patching complete. Please restart the game
 
-It keeps doing that until it detects:
+It keeps doing that (usualy only one cycle) until it detects:
 
 > Tap to land in Solaris-3
 
