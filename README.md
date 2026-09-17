@@ -1,4 +1,4 @@
-# WuWa-AutoPatchReboot
+# WutheringWaves-AutoPatchReboot
 
 Tired of manually restarting Wuthering Waves after a patch, or making a coffee only to come back to the damn restart prompt and now you have to wait more?
 
