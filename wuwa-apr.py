@@ -12,6 +12,7 @@ import winreg
 import threading
 import json
 import queue
+import shutil
 from pathlib import Path
 
 # ---------------- AUTO-INSTALL DEPENDENCIES ----------------
@@ -134,7 +135,6 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 import win32gui
 import win32process
-import win32con
 import win32ui
 
 
@@ -152,26 +152,48 @@ if not is_admin():
     )
     sys.exit()
 
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor aware
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 # ============================================================
 # WUTHERING WAVES OCR WATCHDOG
 # Launches WuWa, OCRs the window, detects login/patch screens,
 # and auto-restarts the game on patch-complete. No fixed coords.
 # ============================================================
 
+# ---------------- WINDOWS DPI AWARENESS ----------------
+# Keep all Win32 window geometry in physical pixels. Without this, Windows
+# can report logical dimensions (for example 1280x720 for a 1920x1080
+# display at 150% scaling), which makes PrintWindow allocate a cropped
+# bitmap and leaves OCR looking at only part of the game.
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor aware
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 # ---------------- CONFIG ----------------
 
-GAME_EXE = r"E:\SteamLibrary\steamapps\common\Wuthering Waves\Wuthering Waves.exe"
+GAME_EXE = r""
 TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 TESSERACT_DOWNLOAD_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
-RESTART_WAIT_SECONDS = 15          # wait after "please restart" before relaunch
-CHECK_INTERVAL_SECONDS = 1.0       # seconds between OCR scans
+RESTART_WAIT_SECONDS = 18          # wait after "please restart" before relaunch
+CHECK_INTERVAL_SECONDS = 0.75       # seconds between OCR scans
 
 LOGIN_CONFIRMATIONS_REQUIRED = 2   # consecutive hits needed to confirm
 PATCH_CONFIRMATIONS_REQUIRED = 2
 
 LOGIN_MATCH_THRESHOLD = 0.72       # fuzzy-match thresholds (1.0 = exact)
-PATCH_MATCH_THRESHOLD = 0.68
+PATCH_MATCH_THRESHOLD = 0.69
 
 # Restart popup must appear within this fraction of screen width/height
 # (0.0 = left/top edge, 1.0 = right/bottom edge) to count as real, so
@@ -197,15 +219,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def get_app_dir():
-    """
-    Where to keep files that must persist across runs (log, debug
-    screenshot, saved config). Deliberately NOT next to the exe/script:
-    someone might run this from their Desktop, a USB drive, or a
-    read-only Program Files folder, and could easily rename, move, or
-    delete a sibling file without realizing it matters. Windows' own
-    per-user AppData\\Roaming is the standard, stable place for this --
-    it survives the exe being moved, renamed, or reinstalled entirely.
-    """
+
+# Where to keep files that must persist across runs (log, debug screenshot, saved config)
+
     appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
     app_dir = os.path.join(appdata, "WuWaWatchdog")
     os.makedirs(app_dir, exist_ok=True)
@@ -220,13 +236,14 @@ CONFIG_FILE = Path(APP_DIR) / "wuwa_watchdog_config.json"
 # Optional: drop a PNG next to the script (or bundle it into the exe with
 # PyInstaller's --add-data) to use a custom tray icon. Falls back to a
 # generated placeholder if it isn't there.
+
 TRAY_ICON_FILENAME = "icon.png"
 
 
 def resource_path(filename):
-    """Resolve a bundled READ-ONLY resource (like the tray icon), whether
-    run from source or frozen (where bundled data lands in sys._MEIPASS).
-    Don't use this for anything the app needs to write -- see get_app_dir()."""
+
+# Resolve a bundled READ-ONLY resource (like the tray icon), whether run from source or frozen (where bundled data lands in sys._MEIPASS).
+
     base = getattr(sys, "_MEIPASS", str(SCRIPT_DIR))
     return os.path.join(base, filename)
 
@@ -270,12 +287,9 @@ def set_status(text, also_log=True):
 
 
 # ---------------- LOGGING ----------------
-# Keeps one file handle open for the whole run instead of reopening
-# ocr_log.txt on every single log() call (matters a lot in DEBUG mode,
-# which logs every OCR word on every scan).
+# Keeps one file handle open for the whole run instead of reopening (ocr_log.txt on every single log() call).
 
 _log_handle = None
-
 
 def _get_log_handle():
     global _log_handle
@@ -286,7 +300,6 @@ def _get_log_handle():
             _log_handle = False  # sentinel: open failed, don't retry every call
     return _log_handle
 
-
 def _close_log_handle():
     global _log_handle
     if _log_handle:
@@ -296,12 +309,9 @@ def _close_log_handle():
             pass
         _log_handle = None
 
-
 atexit.register(_close_log_handle)
 
-
 _log_queue = queue.Queue()  # feeds the live log viewer window
-
 
 def log(message):
     try:
@@ -402,6 +412,8 @@ def wait_for_game_window(timeout=60):
     log("[WINDOW] Waiting for Wuthering Waves window...")
     start = time.time()
     while True:
+        if stop_event.is_set():
+            return None
         window = find_best_game_window()
         if window:
             log("[WINDOW] Found WuWa window:")
@@ -416,17 +428,21 @@ def wait_for_game_window(timeout=60):
 # ---------------- WINDOW CAPTURE ----------------
 
 def capture_game_window(window):
-    """
-    Capture only the WuWa window via PrintWindow (PW_RENDERFULLCONTENT),
-    so GPU-rendered frames come through instead of a black bitmap.
-    """
+    """Capture the complete WuWa client area in physical pixels."""
     hwnd = window["hwnd"]
     if not win32gui.IsWindow(hwnd):
         return None
 
-    left, top, right, bottom = win32gui.GetClientRect(hwnd)
-    width, height = right - left, bottom - top
+    try:
+        # The process is DPI-aware, so this is the physical client size.
+        left, top, right, bottom = win32gui.GetClientRect(hwnd)
+        width, height = right - left, bottom - top
+    except Exception as e:
+        log(f"[CAPTURE] Could not get client size: {e}")
+        return None
+
     if width <= 0 or height <= 0:
+        log(f"[CAPTURE] Invalid client size: {width}x{height}")
         return None
 
     hwnd_dc = src_dc = mem_dc = bitmap = None
@@ -460,9 +476,18 @@ def capture_game_window(window):
         info = bitmap.GetInfo()
         bits = bitmap.GetBitmapBits(True)
         image = Image.frombuffer(
-            "RGB", (info["bmWidth"], info["bmHeight"]), bits, "raw", "BGRX", 0, 1
+            "RGB", (info["bmWidth"], info["bmHeight"]), bits,
+            "raw", "BGRX", 0, 1
         )
-        return image.copy()
+        result_image = image.copy()
+
+        if DEBUG and result_image.size != (width, height):
+            log(
+                f"[CAPTURE] Size mismatch: requested={width}x{height}, "
+                f"bitmap={result_image.width}x{result_image.height}"
+            )
+
+        return result_image
 
     except Exception as e:
         log(f"[CAPTURE] Window capture error: {e}")
@@ -531,7 +556,7 @@ def perform_ocr(image):
             confidence = float(data["conf"][i])
         except Exception:
             confidence = 0
-        if confidence < 10:  # drop low-confidence garbage
+        if confidence < 25:  # drop low-confidence garbage
             continue
         word = normalize_text(raw_text)
         if not word:
@@ -570,7 +595,35 @@ def find_fuzzy_phrase(words, target, threshold):
 
     return None
 
-
+def censor_uid(ocr):
+    # Redacts "User ID: <ID>" from logs.
+    words = ocr["words"]
+    masked = []
+    for i in range(len(words) - 1):
+        if words[i]["text"] in ("id", "1d", "ld"):
+            nxt = words[i + 1]
+            if nxt["text"].isdigit() and 6 <= len(nxt["text"]) <= 12:
+                nxt["text"] = "*" * len(nxt["text"])
+                masked.append(nxt)
+    ocr["text"] = " ".join(w["text"] for w in words)
+    return masked
+    
+def blackout_uid(image, ocr, uid_words):
+    # Censors the UID in the screenshot.
+    if not uid_words:
+        return image
+    scale = image.width / max(1, ocr["image"].width)
+    pad = 4
+    draw = ImageDraw.Draw(image)
+    for w in uid_words:
+        draw.rectangle(
+            (int((w["left"] - pad) * scale), int((w["top"] - pad) * scale),
+             int((w["left"] + w["width"] + pad) * scale),
+             int((w["top"] + w["height"] + pad) * scale)),
+            fill=(0, 0, 0),
+        )
+    return image
+    
 # ---------------- DETECTION ----------------
 
 def detect_login(ocr):
@@ -589,13 +642,8 @@ def detect_login(ocr):
 
 
 def detect_patch(ocr):
-    """
-    Require BOTH "patching complete" and "please restart the game" to be
-    present (not just one), AND require them to sit roughly centered on
-    screen -- like the actual restart popup does. This avoids false
-    positives from things like the permanent bottom-corner version text,
-    which only ever shows "patching complete" on its own.
-    """
+# Require BOTH "patching complete" and "please restart the game" to be present roughly int the center
+
     words = ocr["words"]
 
     matches = []
@@ -624,7 +672,6 @@ def detect_patch(ocr):
     candidate = " | ".join(r["candidate"] for r in matches)
     return {"score": score, "candidate": candidate}
 
-
 def save_debug_screenshot(image):
     if not DEBUG:
         return
@@ -632,7 +679,6 @@ def save_debug_screenshot(image):
         image.save(DEBUG_SCREENSHOT)
     except Exception as e:
         log(f"[DEBUG] Could not save screenshot: {e}")
-
 
 # ---------------- CLOSE / LAUNCH GAME ----------------
 
@@ -675,8 +721,8 @@ def close_game():
 
 
 # ---------------- AUTO-FIND GAME EXE (STEAM) ----------------
-# Fallback for when the hardcoded GAME_EXE path is wrong, missing, or the
-# game got moved/reinstalled to a different Steam library.
+
+# Fallback for when the hardcoded GAME_EXE path is wrong, missing, or the game got moved/reinstalled to a different Steam library.
 
 def find_steam_install_path():
     keys = [
@@ -735,11 +781,9 @@ def _find_exe_in(base_dir, exe_names, max_depth=3):
 
 
 def find_game_exe_via_registry(exe_names):
-    """
-    Non-Steam installs (the official launcher from wutheringwaves.com)
-    still register themselves in Windows' installed-programs list, with
-    an InstallLocation pointing at the game folder. Check that.
-    """
+    
+# Non-Steam installs
+
     uninstall_keys = [
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -792,11 +836,9 @@ def find_game_exe_common_locations(exe_names):
 
 
 def find_game_exe_auto():
-    """
-    Best-effort search, in order: Steam libraries, then Windows'
-    installed-programs registry (covers the standalone/non-Steam
-    launcher), then a handful of common default install folders.
-    """
+
+# Best-effort search. Order: Steam libraries > Windows installed programs registry (standalone/non-Steam) > common default install locations.
+
     exe_names = ["Wuthering Waves.exe", "Client-Win64-Shipping.exe"]
 
     for library in find_steam_library_folders():
@@ -813,16 +855,12 @@ def find_game_exe_auto():
 
     return find_game_exe_common_locations(exe_names)
 
-
 EXPECTED_EXE_NAMES = ["Wuthering Waves.exe", "Client-Win64-Shipping.exe", "WutheringWaves.exe"]
 
-
 def prompt_browse_for_game_exe():
-    """Last resort when nothing was auto-detected: ask the user to
-    browse for the exe by hand. The game's install folder usually has
-    several .exe files (launcher, crash reporter, the real client), so
-    this is explicit about which one to pick and sanity-checks the
-    result instead of silently accepting whatever they clicked."""
+
+# If nothing was auto-detected: ask the user to browse for the exe.
+
     messagebox.showinfo(
         "WuWa Watchdog",
         "Could not find Wuthering Waves automatically.\n\n"
@@ -855,9 +893,8 @@ def prompt_browse_for_game_exe():
             root.destroy()
             return path
 
-        # Picked something, but the filename doesn't match what we'd
-        # expect -- could still be right (renamed install, odd setup),
-        # so warn instead of silently rejecting it.
+        # Picked something unsure? warn instead of silently rejecting it.
+        
         use_anyway = messagebox.askyesno(
             "WuWa Watchdog",
             f'"{os.path.basename(path)}" doesn\'t match the usual game '
@@ -869,6 +906,7 @@ def prompt_browse_for_game_exe():
         if use_anyway:
             root.destroy()
             return path
+        
         # else: loop back and let them browse again
 
 
@@ -928,7 +966,8 @@ def resolve_game_exe():
 def launch_game():
     if not os.path.isfile(GAME_EXE):
         log(f"\n[ERROR] Game executable was not found:\n        {GAME_EXE}")
-        log("\nEdit GAME_EXE at the top of WuWa.py.")
+        log("The game may have been moved or uninstalled.")
+        log(f"Delete {CONFIG_FILE} and restart the app to pick the game exe again.")
         return False
 
     log("[WuWa] Launching game...")
@@ -946,11 +985,15 @@ def launch_game():
 def wait_for_game_process():
     log("[WuWa] Waiting for game process...")
     while not is_game_running():
+        if stop_event.is_set():
+            return
         time.sleep(1)
     log("[WuWa] Game process detected.")
 
 
 def wait_for_window_after_launch():
+    if stop_event.is_set():
+        return
     wait_for_game_process()
     return wait_for_game_window(timeout=120)
 
@@ -994,17 +1037,32 @@ def monitor_game():
             continue
 
         scan_number += 1
-        if DEBUG and scan_number % DEBUG_SCREENSHOT_EVERY_N == 0:
-            save_debug_screenshot(image)
 
         ocr = perform_ocr(image)
+        
+        uid_words = censor_uid(ocr)
+        
+        if DEBUG and (scan_number % DEBUG_SCREENSHOT_EVERY_N == 0 or uid_words):
+            save_debug_screenshot(blackout_uid(image, ocr, uid_words))
 
         if DEBUG:
             log("\n[DEBUG] OCR WORDS:")
             for word in ocr["words"]:
-                log(f"    '{word['text']}' conf={word['confidence']:.1f} "
+                text = word["text"]
+                if text.isdigit() and len(text) >= 7:
+                    text = "*" * len(text)
+                log(f"    '{text}' conf={word['confidence']:.1f} "
                     f"x={word['left']} y={word['top']} w={word['width']} h={word['height']}")
             log("")
+        
+        if uid_words:
+            log("\n" + "=" * 60)
+            log("[OCR] User ID detected (game already running)")
+            log("=" * 60)
+            log("\nWuthering Waves will remain running.")
+            log("The watchdog is exiting.\n")
+            set_status("User ID detected - watchdog finished.", also_log=False)
+            return
 
         login = detect_login(ocr)
         patch = detect_patch(ocr)
@@ -1068,20 +1126,30 @@ def monitor_game():
 
 # ---------------- TESSERACT CHECK ----------------
 
+def find_tesseract():
+    candidates = [
+        TESSERACT_PATH,
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
+        shutil.which("tesseract"),
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
 def _tesseract_present():
-    """Wrapped so WUWA_TEST_NO_TESSERACT=1 can force this path to run
-    for testing, without touching the real Tesseract install."""
     if os.environ.get("WUWA_TEST_NO_TESSERACT") == "1":
         return False
-    return os.path.isfile(TESSERACT_PATH)
-
+    found = find_tesseract()
+    if found:
+        pytesseract.pytesseract.tesseract_cmd = found
+    return bool(found)
 
 def ensure_tesseract_installed():
-    """
-    If Tesseract isn't found, pop up a small dialog offering to open the
-    download page. Tesseract is a real .exe, not a pip package, so this
-    can't auto-install it -- just point the user at the installer.
-    """
+
+# If Tesseract isn't found, pop up a small dialog offering to open the download page
+
     if _tesseract_present():
         return True
 
@@ -1141,6 +1209,8 @@ def _log_viewer_poll():
         updated = True
 
     if updated:
+        if int(_log_viewer_text.index("end-1c").split(".")[0]) > 3000:
+            _log_viewer_text.delete("1.0", "1000.0")  # drop oldest lines
         _log_viewer_text.see(tk.END)
 
     if _log_viewer_show_event.is_set():
@@ -1157,8 +1227,7 @@ def run_log_viewer():
     root = tk.Tk()
     root.title("WuWa Watchdog - Live Log")
     root.geometry("820x480")
-    # Closing the window just hides it -- "Quit" in the tray is what
-    # actually ends the app, not the log window's [X] button.
+    # Closing the window minimizes it. Quit in the systray ends the app.
     root.protocol("WM_DELETE_WINDOW", root.withdraw)
 
     text = tk.Text(root, wrap="word", bg="#111318", fg="#ddd", insertbackground="#ddd")
@@ -1169,7 +1238,7 @@ def run_log_viewer():
 
     _log_viewer_root = root
     _log_viewer_text = text
-    root.withdraw()  # starts hidden; tray's "Show Log" reveals it
+    root.withdraw()  # starts hidden
 
     root.after(200, _log_viewer_poll)
     root.mainloop()
@@ -1197,7 +1266,7 @@ def on_show_log(icon, item):
 
 def on_show_debug_screenshot(icon, item):
     if not DEBUG_SCREENSHOT.exists():
-        messagebox.showinfo("WuWa Watchdog", "No debug screenshot saved yet.")
+        ctypes.windll.user32.MessageBoxW(0, "No debug screenshot saved yet.", "WuWa Watchdog", 0x40)
         return
     try:
         os.startfile(str(DEBUG_SCREENSHOT))
@@ -1219,23 +1288,25 @@ def on_quit(icon, item):
 
 
 def build_tray_menu():
-    return pystray.Menu(
+    items = [
         pystray.MenuItem(lambda item: _status_text, None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Show Live Log", on_show_log),
-        pystray.MenuItem("Show Debug Screenshot", on_show_debug_screenshot),
+    ]
+    if DEBUG:
+        items.append(pystray.MenuItem("Show Debug Screenshot", on_show_debug_screenshot))
+    items += [
         pystray.MenuItem("Open Data Folder", on_open_data_folder),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", on_quit),
-    )
+    ]
+    return pystray.Menu(*items)
 
 
 def run_watchdog(icon):
-    """
-    Runs on a background thread (spawned by pystray) once the tray icon
-    is visible. Launches/watches the game; the main thread just hosts
-    the tray's event loop via icon.run().
-    """
+
+# Runs on a background thread (spawned by pystray) once the tray icon is visible.
+
     global _tray_icon
     _tray_icon = icon
     icon.visible = True
@@ -1273,18 +1344,41 @@ def run_watchdog(icon):
     finally:
         icon.stop()
 
+_instance_mutex = None
+
+def ensure_single_instance():
+    """Returns False if another copy of the watchdog is already running."""
+    global _instance_mutex
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _instance_mutex = kernel32.CreateMutexW(None, False, "Local\\WuWaWatchdog_SingleInstance")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo(
+            "WuWa Watchdog",
+            "The watchdog is already running (check your system tray).",
+        )
+        root.destroy()
+        return False
+    return True
 
 def main():
+    if not ensure_single_instance():
+        return
+        
     safe_print("\n" + "=" * 60)
     safe_print("       WUTHERING WAVES OCR WATCHDOG")
     safe_print("=" * 60 + "\n")
 
     # Must run before any log() call: log() now keeps the file open for
     # the whole session, and Windows can't delete a file that's open.
-    try:
-        LOG_FILE.unlink()
-    except FileNotFoundError:
-        pass
+    for stale_file in (LOG_FILE, DEBUG_SCREENSHOT):
+        try:
+            stale_file.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
     if not ensure_tesseract_installed():
         log("[ERROR] Tesseract-OCR is required. Exiting.")
@@ -1301,10 +1395,6 @@ def main():
     GAME_EXE = resolved
     log(f"[SYSTEM] Using game executable: {GAME_EXE}")
 
-    # From here on there's no console interaction -- everything runs
-    # through the tray icon, its menu, the live log window, and the log
-    # file. The log viewer gets its own thread/Tk mainloop so it can
-    # stay open the whole session without blocking the tray.
     threading.Thread(target=run_log_viewer, daemon=True).start()
 
     icon = pystray.Icon(
@@ -1313,9 +1403,7 @@ def main():
         "WuWa Watchdog: Starting...",
         menu=build_tray_menu(),
     )
-    # setup() is called by pystray in its own background thread once the
-    # tray icon is visible, while icon.run() blocks this (main) thread
-    # running the tray's own event loop -- standard pystray pattern.
+    
     icon.run(setup=run_watchdog)
 
 
