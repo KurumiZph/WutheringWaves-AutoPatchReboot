@@ -1,218 +1,272 @@
-# Developing / Building From Source
+# Development
 
-This covers running `wuwa-apr.py` directly and building your own `.exe`.
-If you just want to use the app, see [Readme](README.md) instead.
+Development and build notes for the current WutheringWaves-AutoPatchReboot
+source.
 
-## Table of Contents
-
-- [Requirements](#requirements)
-- [Setup](#setup)
-- [Project Structure](#project-structure)
-- [Running From Source](#running-from-source)
-- [Configuration](#configuration)
-- [Testing the Fallback Flows](#testing-the-fallback-flows)
-- [Building the .exe](#building-the-exe)
-- [Packaging a Release](#packaging-a-release)
-- [Where Data Is Stored](#where-data-is-stored)
-- [Important Considerations](#important-considerations)
+For normal installation and usage, see [README.md](README.md).
 
 ## Requirements
 
 - Windows 10/11
 - Python 3.13+
-- Tesseract-OCR (or let the script prompt you for it on first run)
-- Git (to clone the repo)
-- PyInstaller and 7-Zip (only needed to build/package releases)
+- Tesseract-OCR
+- Git
+- PyInstaller
+- 7-Zip, if creating release archives
 
 ## Setup
 
-```bash
+```powershell
 git clone https://github.com/KurumiZph/WuWa-AutoPatchReboot.git
 cd WuWa-AutoPatchReboot
-```
-
-Dependencies are installed automatically the first time you run the
-script (see `ensure_dependencies()` near the top of `wuwa-apr.py`),
-missing packages get pip-installed on the spot. If you'd rather install
-them yourself up front:
-
-```bash
 python -m pip install -r requirements.txt
 ```
 
-## Project Structure
+Run the source with:
 
+```powershell
+python wuwa-apr-new.py
 ```
+
+Tesseract must be installed on the development machine. The source contains
+dependency/elevation handling, but a frozen PyInstaller build relies on the
+dependencies available at build time.
+
+## Project Files
+
+```text
 WuWa-AutoPatchReboot/
-├── wuwa-apr.py          # the entire application, single file
-├── requirements.txt     # runtime deps (also auto-installed on first run)
-├── icon.png             # tray icon, bundled into the exe via --add-data
-├── wuwa.ico             # exe file/taskbar icon, used via --icon
-├── README.md            # end-user docs
-├── DEVELOPMENT.md       # this file
+├── wuwa-apr-new.py
+├── requirements.txt
+├── icon.png
+├── wuwa.ico
+├── README.md
+├── DEVELOPMENT.md
 ├── LICENSE
 └── .gitignore
 ```
 
-Both `icon.png` and `wuwa.ico` are source assets, not build output, and
-are tracked in git. Build output (`build/`, `dist/`, `*.spec`) and
-anything generated at runtime is gitignored.
+A PyInstaller `--onedir` build contains the executable plus `_internal\`; both
+are required.
 
-After a build you'll also have:
+## Current Configuration
 
-```
-build/                   # PyInstaller scratch, safe to delete
-dist/
-└── wuwa-apr/            # <- the actual releasable app
-    ├── wuwa-apr.exe
-    └── _internal/
-```
-
-## Running From Source
-
-```bash
-python wuwa-apr.py
-```
-
-First run will walk you through the same UAC prompt / Tesseract check /
-game-detection flow described in the main README.
-
-## Configuration
-
-Near the top of `wuwa-apr.py`:
+Important runtime settings currently include:
 
 ```python
-GAME_EXE = r"C:\Path\To\Wuthering Waves.exe"   # fallback default; usually
-                                                 # auto-detected or remembered
-                                                 # in config.json instead
-TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+RESTART_WAIT_SECONDS = 15
+CHECK_INTERVAL_SECONDS = 1.0
 
-RESTART_WAIT_SECONDS = 15          # delay before relaunching after patch
-CHECK_INTERVAL_SECONDS = 1.0       # OCR scan frequency
-
-LOGIN_CONFIRMATIONS_REQUIRED = 2   # consecutive hits needed to confirm
+LOGIN_CONFIRMATIONS_REQUIRED = 2
 PATCH_CONFIRMATIONS_REQUIRED = 2
 
-LOGIN_MATCH_THRESHOLD = 0.72       # fuzzy-match thresholds (1.0 = exact)
+LOGIN_MATCH_THRESHOLD = 0.72
 PATCH_MATCH_THRESHOLD = 0.68
 
-PATCH_CENTER_X_RANGE = (0.15, 0.85)  # popup must appear roughly centered
-PATCH_CENTER_Y_RANGE = (0.20, 0.80)  # on screen to count (filters out
-                                       # corner watermark text)
+PATCH_CENTER_X_RANGE = (0.15, 0.85)
+PATCH_CENTER_Y_RANGE = (0.20, 0.80)
 
-DEBUG = True                       # verbose logging + debug screenshot
+MAX_OCR_DIMENSION = 2200
+
+DEBUG = True
+DEBUG_SCREENSHOT_EVERY_N = 3
 ```
 
-## Testing the Fallback Flows
+Current OCR targets:
 
-Most of the interesting code paths (missing Tesseract, missing game exe,
-missing dependencies) don't naturally trigger on a dev machine that
-already has everything set up. A few env-var hooks exist specifically so
-you can exercise them without touching your real install:
+```python
+LOGIN_TARGET = "tap to land in solaris 3"
+PATCH_TARGETS = [
+    "patching complete",
+    "please restart the game",
+]
+```
+
+Patch detection requires both patch phrases and checks their approximate screen
+position to reduce false positives.
+
+## Building the Application
+
+There is one normal packaged build. Diagnostic features are part of the same
+application rather than a separate Debug executable.
+
+Build from a clean tree:
 
 ```powershell
-# Force the "Tesseract not found" dialog, even though it's installed:
-$env:WUWA_TEST_NO_TESSERACT="1"
-python wuwa-apr.py
-
-# Force straight past auto-detection to the browse dialog:
-$env:WUWA_TEST_NO_CONFIG="1"
-$env:WUWA_TEST_NO_AUTODETECT="1"
-python wuwa-apr.py
+pyinstaller --clean --onedir --windowed --icon=wuwa.ico --uac-admin --add-data "icon.png;." --name wuwa-apr wuwa-apr-new.py
 ```
 
-Note `WUWA_TEST_NO_CONFIG` is needed alongside `WUWA_TEST_NO_AUTODETECT`, once the game's been found once, its path is cached in `config.json` and
-takes priority over everything else, so the autodetect skip alone won't
-reach the browse dialog if a path is already remembered.
+The result is:
 
-For testing the pip auto-installer itself, use a throwaway virtual
-environment instead (env vars can't fake missing packages, since real
-package installation is what's actually being tested):
+```text
+dist\wuwa-apr\
+├── wuwa-apr.exe
+└── _internal\
+```
+
+The distributed application normally runs quietly in the tray. Users can open
+**Show Live Log** or **Show Debug Screenshot** when they need diagnostics.
+
+`DEBUG = True` remains enabled for the current build because it provides the
+diagnostic information used by the tray tools. It does not require a separate
+Debug build.
+
+## Testing
+
+### Syntax
 
 ```powershell
-python -m venv test_env
-test_env\Scripts\python.exe wuwa-apr.py
+python -c "import ast, pathlib; ast.parse(pathlib.Path('wuwa-apr-new.py').read_text(encoding='utf-8')); print('syntax OK')"
 ```
 
-Delete the `test_env` folder afterward. Your main Python install is never
-touched.
+### Functional states
 
-## Building the .exe
+Test:
+
+1. Patch/restart screen.
+2. Login screen.
+3. Already-logged-in game with visible User ID.
+4. Game restart after confirmed patch detection.
+5. Tray Quit.
+6. Game-path detection and remembered configuration.
+7. Tesseract detection/error handling.
+8. Live Log and Debug Screenshot tray actions.
+
+### DPI regression
+
+Test at least:
+
+- 1920x1080 @ 100%
+- 1920x1080 @ 125%
+- 1920x1080 @ 150%
+- 1680x1050 @ 150%
+
+If available, also test higher resolutions and scaling levels.
+
+The **1680x1050 @ 150%** case is an important regression test. The previous
+capture implementation could produce a cropped logical-resolution image at
+higher Windows scaling. The current implementation has been tested successfully
+against that case.
+
+For diagnostics, inspect:
+
+```text
+%APPDATA%\WuWaWatchdog\ocr_debug.png
+```
+
+The screenshot should contain the complete WuWa client.
+
+## Capture and OCR
+
+The capture path is DPI-aware and initializes Windows DPI awareness once:
+
+```python
+ctypes.windll.shcore.SetProcessDpiAwareness(2)
+```
+
+with:
+
+```python
+ctypes.windll.user32.SetProcessDPIAware()
+```
+
+as the fallback.
+
+Keep only one DPI-awareness initialization block.
+
+The current window capture uses:
+
+```python
+PrintWindow(..., 2)
+```
+
+where `2` is `PW_RENDERFULLCONTENT`.
+
+Do not casually change this to `3`. The earlier
+`PW_RENDERFULLCONTENT | PW_CLIENTONLY` variant was part of the high-DPI capture
+problem.
+
+The intended processing order is:
+
+```text
+physical window capture
+        ↓
+complete full-resolution image
+        ↓
+OCR preprocessing
+        ↓
+downscale when needed
+        ↓
+Tesseract
+        ↓
+login / patch / UID detection
+```
+
+`MAX_OCR_DIMENSION` limits OCR processing size; it should not limit the initial
+window capture.
+
+## UID Handling
+
+The watchdog looks for a likely User ID token following an `id`, `1d`, or `ld`
+label.
+
+When recognized:
+
+- the UID is censored in OCR/log output;
+- the corresponding region is blacked out in the diagnostic screenshot;
+- the watchdog treats the game as already running and exits without restarting.
+
+Diagnostic screenshots and logs should still be treated as potentially sensitive.
+
+## Game Detection and Restart
+
+The application:
+
+1. Finds Wuthering Waves processes by known process names.
+2. Finds visible top-level windows belonging to those processes.
+3. Selects the largest matching window.
+4. Captures the client area.
+5. Runs OCR.
+6. Requires consecutive detections before acting.
+7. On confirmed patch detection, terminates the matching game process(es), waits,
+   and launches the configured executable again.
+
+The remembered game path is stored in:
+
+```text
+%APPDATA%\WuWaWatchdog\wuwa_watchdog_config.json
+```
+
+## Packaging Checklist
+
+Before publishing a release:
+
+1. Run the syntax check.
+2. Build the application with `--clean`.
+3. Test the packaged executable, not only the Python source.
+4. Test patch, login, and existing-UID behavior.
+5. Test at least one display-scaling configuration above 100%.
+6. Verify Live Log and Debug Screenshot.
+7. Verify tray Quit.
+8. Verify game-path detection and remembered configuration.
+9. Archive the complete release directory, including `_internal\`.
+
+Example:
 
 ```powershell
-pyinstaller --onedir --windowed --icon=wuwa.ico --add-data "icon.png;." wuwa-apr.py
+7z a WuWa-AutoPatchReboot-vX.Y.Z.7z .\dist\wuwa-apr\*
 ```
 
-- `--onedir` produces an exe plus an `_internal\` folder, rather than a
-  single self-extracting exe. See the note below on why.
-- `--windowed` suppresses the console window (the app is tray/dialog-driven).
-- `--icon=wuwa.ico` sets the exe's file/taskbar icon.
-- `--add-data "icon.png;."` bundles the tray icon image so it's available
-  at runtime.
+Do not distribute only the `.exe` from an `--onedir` build.
 
-Output lands in `dist\wuwa-apr\`.
+## PyInstaller Notes
 
-**Why `--onedir` and not `--onefile`:** a one-file build extracts itself
-to a temporary `_MEIxxxxx` folder under `%TEMP%` on every launch and
-deletes it on exit. That delete can fail if anything briefly holds a file
-handle in there, producing a "Failed to remove temporary directory"
-warning dialog in the user's face. `--onedir` has no extraction step at
-all, so that failure mode simply doesn't exist.
+- `--onedir` keeps the executable and `_internal\` together.
+- `--windowed` prevents a console window for the packaged tray application.
+- `--uac-admin` adds the administrator manifest used by the current packaged
+  build.
+- `--add-data "icon.png;."` includes the tray icon required by the application.
+- `--clean` removes previous PyInstaller build artifacts before packaging.
 
-**Why no `--uac-admin`:** the script elevates itself at startup via
-`ShellExecuteW(..., "runas", ...)` (see the `is_admin()` block near the
-top of `wuwa-apr.py`). A `requireAdministrator` manifest would mean any
-parent process launching the exe with a plain `CreateProcess` fails
-outright with error 740, which breaks launching from other programs.
-Self-elevation works regardless of how the exe was started.
-
-## Packaging a Release
-
-Zip up the built folder and attach the archive to a GitHub Release:
-
-```powershell
-7z a WuWa-AutoPatchReboot-v1.0.0.7z .\dist\wuwa-apr\*
-```
-
-Users extract it and run `wuwa-apr.exe`. Keep `_internal\` alongside the
-exe, the app won't start without it.
-
-## Where Data Is Stored
-
-Both the source script and the built exe write their log, debug
-screenshot, and remembered game path to:
-
-```
-%APPDATA%\WuWaWatchdog\
-```
-
-This is deliberate (see `get_app_dir()` in `wuwa-apr.py`), it keeps
-persistent data out of the project folder and out of wherever the exe
-happens to be run from, so it survives the exe being moved, renamed, or
-rebuilt.
-
-## Important Considerations 
-
-- **pywin32 needs a post-install step.** A plain `pip install pywin32`
-  can report success while `import win32gui` still fails with
-  `ModuleNotFoundError`, pywin32 needs its DLLs copied into place
-  separately, which `ensure_dependencies()` now handles automatically by
-  running `pywin32_postinstall.py -install` when needed. If you ever hit
-  this manually, run:
-  
-  ```powershell
-  python Scripts\pywin32_postinstall.py -install
-  ```
-- **`ensure_dependencies()` is a no-op in the frozen exe.** It checks
-  `sys.frozen` and returns immediately, since a frozen exe already has
-  every dependency bundled and has no real `pip` to call. This bootstrap
-  only matters when running the raw `.py`.
-- **Building the exe requires a working dev environment.** PyInstaller
-  can only bundle modules it can actually import at build time, if
-  pywin32 isn't fully working (see above) on the machine doing the build,
-  the build itself will fail with the same error, even though end users
-  of the resulting exe would never see it.
-- **`cleanup_stale_pyinstaller_temp_dirs()` is a leftover safety net.**
-  It sweeps old `_MEI*` folders out of `%TEMP%` at startup, which only
-  ever mattered for `--onefile` builds. It's a no-op under `--onedir`,
-  kept in case the build mode ever changes back.
+If the elevation mechanism or resource loading changes, re-check whether the
+current PyInstaller options are still necessary.

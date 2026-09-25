@@ -1,136 +1,128 @@
 # WutheringWaves-AutoPatchReboot
 
-Tired of manually restarting Wuthering Waves after a patch, or making a coffee only to come back to the damn restart prompt and now you have to wait more?
+A small Windows watchdog for Wuthering Waves that uses OCR to detect the
+patch/restart screen and automatically restarts the game.
 
-This app watches the game window for you and automatically restarts it when
-it sees:
-
-> Patching complete. Please restart the game
-
-It keeps doing that (usualy only one cycle) until it detects:
+It stops when it detects the login screen:
 
 > Tap to land in Solaris-3
 
-...at which point it stops and leaves the game running.
-
-Building it from source or want to contribute? See
-[Development](DEVELOPMENT.md)
-
-## Table of Contents
-
-- [Requirements](#requirements)
-- [Download & Run](#download--run)
-- [First Run](#first-run)
-- [Using the Tray Icon](#using-the-tray-icon)
-- [Where Your Data Lives](#where-your-data-lives)
-- [Troubleshooting](#troubleshooting)
-- [Limitations](#limitations)
-- [Disclaimer](#disclaimer)
-- [AI Assistance](#ai-assistance)
-- [License](#license)
+Building from source or contributing? See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Requirements
 
 - Windows 10/11
-- [Tesseract-OCR](https://github.com/UB-Mannheim/tesseract/wiki), the app
-  will prompt you to install this if it's missing, see below
-- Wuthering Waves, installed via Steam or the official launcher
+- [Tesseract-OCR](https://github.com/UB-Mannheim/tesseract/wiki)
+- Wuthering Waves, installed through Steam or the official launcher
 
-Python and any Python packages are bundled inside the `.exe`.
+Python dependencies are bundled with the packaged executable.
 
 ## Download & Run
 
-Grab the latest archive from the [Releases page](../../releases) and
-extract it anywhere you like, for example `Documents\WuWa AutoPatchReboot\`.
-Avoid extracting it into the Wuthering Waves install folder itself, since
-game patches may touch that directory.
+Download the latest release from the [Releases page](../../releases) and
+extract the archive somewhere convenient.
 
-You'll get:
+A normal `--onedir` release contains:
 
-```
+```text
 WuWa-AutoPatchReboot\
-├── wuwa-apr.exe        <- run this
+├── wuwa-apr.exe
 └── _internal\
 ```
 
-Keep `wuwa-apr.exe` and `_internal\` together in the same folder. Then make
-a shortcut to `wuwa-apr.exe` (right-click > Send to > Desktop) and use that
-shortcut in place of your usual Wuthering Waves shortcut. No installer, no
-setup wizard.
+Keep the executable and `_internal\` together.
 
 ## First Run
 
-1. **A UAC ("Do you want to allow this app...") prompt appears.** Click
-   Yes. The app needs admin rights to reliably capture the game window.
-   This happens on every launch, not just the first.
+1. The application requests administrator permission. Click **Yes**.
+2. If Tesseract-OCR is missing, install it when prompted.
+3. The application searches for the Wuthering Waves executable automatically.
+   If it cannot find it, select it manually. The selected path is remembered.
+4. The watchdog minimizes to the system tray and starts monitoring the game.
 
-2. **If Tesseract-OCR isn't installed**, a prompt opens leading to the download page.
-   Install it normally (default install location recommended), then click OK back in the app to continue.
+## Tray Menu
 
-3. **It looks for your Wuthering Waves install automatically** checking
-   Steam, the Windows registry, and a few common install folders. If it
-   genuinely can't find it, a file picker opens and asks you to browse to
-   it yourself. Whatever it finds (automatically or by hand) is remembered
-   for next time, so this only happens once.
+Right-click the tray icon to access:
 
-4. The application minimizes to the system tray and the game launches with the watchdog active.
+- **Status** — current watchdog state.
+- **Show Live Log** — opens the live application log when you want to inspect
+  what the watchdog is doing.
+- **Show Debug Screenshot** — opens the most recent OCR screenshot when you
+  want to check what the watchdog is seeing.
+- **Open Data Folder** — opens the application's data directory.
+- **Quit** — stops the watchdog without closing Wuthering Waves.
 
-## Using the Tray Icon
+The application normally runs quietly in the tray. Diagnostic options are
+available when needed, so there is no separate Debug version for users.
 
-Right-click the tray icon for:
+The watchdog normally exits automatically after it has handled the patch/restart
+cycle, detected the login screen, or detected an already-running User ID.
 
-- **Status line**: shows what it's currently doing | (waiting for the window, monitoring, restarting, etc.)
-- **Show Live Log**: opens a window with real-time log output.
-- **Show Debug Screenshot**: opens the last screenshot it OCR'd, useful for debugging.
-- **Open Data Folder**: opens the log/config folder.
-- **Quit**: stops the watchdog. This does **not** close Wuthering Waves.
+## Data Location
 
-The app closes itself automatically once it detects the login screen, usually you don't need to quit it manually.
+Runtime files are stored in:
 
-## Where Your Data Lives
-
-Everything the app writes (log file, last debug screenshot, and configured game path) is stored in:
-
-```
+```text
 %APPDATA%\WuWaWatchdog\
 ```
 
-Nothing is written next to the `.exe`, so you can move or re-extract the
-app folder freely without losing your settings.
+Typical files include:
+
+```text
+ocr_log.txt
+ocr_debug.png
+wuwa_watchdog_config.json
+```
+
+The debug log and screenshot may contain game/account information. Review them
+before sharing.
 
 ## Troubleshooting
 
-- **Detection seems wrong / restarts happening when they shouldn't:**
-  check tray > Show Debug Screenshot and Show Live Log to see what it's
-  actually reading off your screen.
-- **It picked the wrong exe / can't find the game:** delete
-  `%APPDATA%\WuWaWatchdog\wuwa_watchdog_config.json` and relaunch to force
-  it to re-detect (or re-browse).
-- **The app won't start, or complains about missing files:** make sure you
-  extracted the whole archive and that `_internal\` is still sitting next
-  to `wuwa-apr.exe`. Moving the exe out on its own won't work.
-- **Don't share debug logs/screenshots publicly.** They might contain
-  private information.
+### Detection is not working
+
+Open **Show Live Log** and **Show Debug Screenshot** from the tray.
+
+If the screenshot itself is incomplete or cropped, the problem is with window
+capture rather than Tesseract recognition.
+
+### Wrong Wuthering Waves executable
+
+Delete:
+
+```text
+%APPDATA%\WuWaWatchdog\wuwa_watchdog_config.json
+```
+
+and launch again to select the game executable.
+
+### Missing files / application will not start
+
+Make sure the entire `--onedir` release was extracted and that `_internal\`
+is beside the executable.
+
+### Tesseract errors
+
+Make sure Tesseract-OCR is installed. The application checks common installation
+locations and `PATH`.
 
 ## Limitations
 
-This project relies on OCR and the current Wuthering Waves UI text.
-Future game updates may change wording or layout and break detection.
-
-OCR accuracy can also vary with resolution and display scaling.
-
-The app works if the game is not in focus but not when the game window is minimized.
+- Detection depends on the current Wuthering Waves UI text and layout.
+- Game updates may change the UI and require detection changes.
+- OCR accuracy can vary with rendering, resolution, and display scaling.
+- Minimized game windows are not expected to capture reliably.
 
 ## Disclaimer
 
-This is an unofficial community project and is not affiliated with Kuro
-Games or Wuthering Waves. Use it at your own risk and make sure you're
-following the game's Terms of Service.
+This is an unofficial community project and is not affiliated with Kuro Games or
+Wuthering Waves. Use it at your own risk and make sure you follow the game's
+Terms of Service.
 
 ## AI Assistance
 
-Parts of this project's implementation were developed with AI assistance.
-The project is maintained and tested by the repository owner.
+Parts of the implementation were developed with AI assistance. The project is
+maintained and tested by the repository owner.
 
 ## License
 
