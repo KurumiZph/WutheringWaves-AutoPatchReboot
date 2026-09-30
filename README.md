@@ -1,3 +1,7 @@
+### < WIP: Resource tier resolving and launch fix >
+Update 3.7 introduced resource tiers and game requires dynamic arguments to launch, current launch logic needs a rework.
+**Error: Fatal error: [File:Unknown] [Line:54] kuro: Use launcher to start the game!**
+
 # WutheringWaves-AutoPatchReboot
 
 A small Windows watchdog for Wuthering Waves that uses OCR to detect the
