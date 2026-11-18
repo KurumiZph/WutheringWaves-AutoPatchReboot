@@ -185,7 +185,7 @@ GAME_EXE = r""
 TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 TESSERACT_DOWNLOAD_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
-RESTART_WAIT_SECONDS = 18          # wait after "please restart" before relaunch
+RESTART_WAIT_SECONDS = 10          # wait after "please restart" before relaunch
 CHECK_INTERVAL_SECONDS = 0.75       # seconds between OCR scans
 
 LOGIN_CONFIRMATIONS_REQUIRED = 2   # consecutive hits needed to confirm

@@ -1,260 +1,97 @@
-# Development
+# Build it yourself
 
-Development and build notes for the current WutheringWaves-AutoPatchReboot source.
+Everything you need to compile WuWa APR on your own PC. Needs **Rust 1.79 or newer** (rustup gives you that).
 
-For normal installation and usage, see [README.md](README.md).
+## 1. Set up
 
-## Requirements
+### Installers:
+**Windows 10 / 11 only.** Install these once:
 
-- Windows 10/11
-- Python 3.13+
-- Tesseract-OCR
-- Git
-- PyInstaller
-- 7-Zip, if creating release archives
+1. **C++ build tools**: needed by Rust to link on Windows.
+   Get [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and tick
+   **Desktop development with C++**.
+2. **Rust**: install from [rustup.rs](https://rustup.rs) (the default options are fine).
+3. **Git**: from [git-scm.com](https://git-scm.com).
 
-## Setup
+**or**
+
+### Winget:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install Rustlang.Rustup
+winget install Git.Git
+```
+
+## 2. Get the code
 
 ```powershell
 git clone https://github.com/KurumiZph/WuWa-AutoPatchReboot.git
 cd WuWa-AutoPatchReboot
-python -m pip install -r requirements.txt
 ```
 
-Run the source with:
+## 3. Build
 
 ```powershell
-python wuwa-apr.py
+.\build.ps1
 ```
 
-Tesseract must be installed on the development machine. The source contains
-dependency/elevation handling, but a frozen PyInstaller build relies on the
-dependencies available at build time.
+Your exe is at `dist\wuwa-apr.exe`. The first build takes a few minutes while the dependencies compile; after that
+it's fast.
 
-## Project Files
+Prefer plain Cargo? `cargo build --release` gives you `target\release\wuwa-apr.exe`.
 
-```text
-WuWa-AutoPatchReboot/
-├── wuwa-apr-new.py
-├── requirements.txt
-├── icon.png
-├── wuwa.ico
-├── README.md
-├── DEVELOPMENT.md
-├── LICENSE
-└── .gitignore
-```
+## Run and test
 
-A PyInstaller `--onedir` build contains the executable plus `_internal\`; both are required.
-
-## Current Configuration
-
-Important runtime settings currently include:
-
-```python
-RESTART_WAIT_SECONDS = 15            # Time to wait after detecting patch notice (seconds).
-CHECK_INTERVAL_SECONDS = 1.0         # Time to wait before performing the next OCR (seconds).
-
-LOGIN_CONFIRMATIONS_REQUIRED = 2     # Number of time the login prompt needs to be detected before exiting.
-PATCH_CONFIRMATIONS_REQUIRED = 2     # Number of time the patch restart prompt needs to be detected before restarting.
-
-LOGIN_MATCH_THRESHOLD = 0.72         # Higher value = better matching. Too high or low values may not trigger reliably.
-PATCH_MATCH_THRESHOLD = 0.68         # ^
-
-PATCH_CENTER_X_RANGE = (0.15, 0.85)  # [X min, X max] bounding range to detect for patch notice. (range 0 to 1 as a fraction of screen)
-PATCH_CENTER_Y_RANGE = (0.20, 0.80)  # [Y min, Y max] bounding range to detect for patch notice. (range 0 to 1 as a fraction of screen)
-
-MAX_OCR_DIMENSION = 2200             # Screenshots downsampling resolution
-
-DEBUG = True                         # If True, dumps all the info in logs.
-DEBUG_SCREENSHOT_EVERY_N = 3         # Time to wait before performing next screen capture (seconds).
-```
-
-Current OCR targets:
-
-```python
-LOGIN_TARGET = "tap to land in solaris 3"
-PATCH_TARGETS = [
-    "patching complete",
-    "please restart the game",
-]
-```
-
-Patch detection requires both patch phrases and checks their approximate screen
-position to reduce false positives.
-
-## Building the Application
-
-There is one normal packaged build. Diagnostic features are part of the same
-application rather than a separate Debug executable. `DEBUG = True` remains enabled for the current build becausee performance and storage impact is minimal.
-
-Build from a clean tree:
+APR requires admin rights, so `cargo run` only works from a terminal opened **as administrator**.
 
 ```powershell
-pyinstaller --clean --onefile --windowed --icon=wuwa.ico --uac-admin --add-data "icon.png;." wuwa-apr.py
+cargo test          # unit tests
 ```
 
-### PyInstaller Notes
+## Something odd?
 
-- `--onedir` keeps the executable and `_internal\` together.
-- `--windowed` prevents a console window for the packaged tray application.
-- `--uac-admin` adds the administrator manifest used by the current packaged
-  build.
-- `--add-data "icon.png;."` includes the tray icon required by the application.
-- `--clean` removes previous PyInstaller build artifacts before packaging.
+- **`link.exe not found`**: the C++ build tools aren't installed, or the terminal was opened before you installed
+  them. Reinstall step 1 and open a new terminal.
+- **Stale build / wrong icon**: `cargo clean`, delete `dist\`, run `.\build.ps1` again.
+- **Can't overwrite `wuwa-apr.exe`**: quit APR from the tray first.
 
-If the elevation mechanism or resource loading changes, re-check whether the
-current PyInstaller options are still necessary.
+## Project layout
 
-The build result should be:
+Everything is in `src/`. The UI is plain Win32 + GDI (no UI framework).
 
-```text
-dist\wuwa-apr\
-├── wuwa-apr.exe
-└── _internal\
-```
+| File | What it does |
+| --- | --- |
+| `main.rs` | Entry point. APR runs on its own thread; the main thread owns the tray icon and windows. |
+| `monitor.rs` | APR itself: launch the game, scan with OCR, restart after a patch. |
+| `detect.rs`, `textmatch.rs`, `cadence.rs` | Login / patch / UID detection, fuzzy text matching, and scan pacing (pure logic, unit-tested). |
+| `ocr.rs`, `capture.rs`, `image_ops.rs` | Windows OCR, grabbing the game window, pixel helpers. |
+| `game.rs`, `installs.rs`, `autologin.rs` | Game process handling, finding Steam / launcher installs, Auto Login input. |
+| `languages.rs` | Game languages and `languages.json`. |
+| `settings.rs`, `config.rs` | Presets and values (`settings.json`), paths and `config.json`. |
+| `log.rs`, `logstyle.rs`, `shots.rs` | Logs, log colouring, saved screenshots. |
+| `ui.rs`, `appwin.rs`, `gfx.rs`, `ui_types.rs` | Tray, main window, GDI drawing helpers. |
+| `tab_logs.rs`, `tab_settings.rs`, `tab_misc.rs` | The three tabs. |
+| `overlay.rs` | The "Patch detected" notification box. |
+| `selftest.rs`, `sys.rs`, `state.rs` | Test tools, OS helpers, shared flags. |
 
-The distributed application normally runs quietly in the tray. Users can open
-**Show Live Log** or **Show Debug Screenshot** when they need diagnostics.
+## Icons
 
-## Testing
+- `assets/icon.ico` is the **exe icon** (embedded by `build.rs`).
+- `assets/tray.ico` is compiled into the program and used for the tray, the window icon (Alt+Tab) and the header logo.
 
-### Syntax
+Use a multi-size `.ico` (16 to 256 px). Windows caches exe icons, so if one looks stale, copy or rename the exe.
 
-```powershell
-python -c "import ast, pathlib; ast.parse(pathlib.Path('wuwa-apr-new.py').read_text(encoding='utf-8')); print('syntax OK')"
-```
+## Adding or fixing a language
 
-### Functional states
+Texts per language live in `languages.json` in `%APPDATA%\WuWa-APR\` (open it with **Misc > Languages file**, apply
+with **Misc > Reload languages**). Each language has a name, an OCR language, login text, UID labels and the patch
+notice. Leave the patch notice empty (`[]`) if you don't have it yet; patch detection is then off for that language.
+To make it permanent for everyone, add it to the built-in list in `src/languages.rs` and open a pull request.
 
-Test:
+Test it with **Misc > Test an image** on a screenshot, or **Run self-test**, without waiting for a real patch.
 
-1. Patch/restart screen.
-2. Login screen.
-3. Already-logged-in game with visible User ID.
-4. Game restart after confirmed patch detection.
-5. Tray Quit.
-6. Multi-installation discovery and installation selection.
-7. Remembered installation selection enabled and disabled.
-8. Resource tier resolving for SD/HD/UHD installations.
-10. Tesseract detection/error handling.
-11. Live Log and Debug Screenshot tray actions.
+## Contributing
 
-### DPI regression
-
-Test at least:
-
-- 1920x1080 @ 100% | 125% | 150%
-- 1680x1050 @ 100% | 125% | 150%
-- 1366x768  @ 100% | 125% | 150%
-- 1280x720  @ 100% | 125% | 150%
-
-If available, also test higher resolutions and scaling levels.
-
-For diagnostics, inspect:
-
-```text
-%APPDATA%\WuWaWatchdog\ocr_debug.png
-```
-
-The screenshot should contain the complete WuWa client.
-
-## Capture and OCR
-
-The capture path is DPI-aware and initializes Windows DPI awareness once:
-
-```python
-ctypes.windll.shcore.SetProcessDpiAwareness(2)
-```
-
-with fallback:
-
-```python
-ctypes.windll.user32.SetProcessDPIAware()
-```
-
-Keep only one DPI-awareness initialization block.
-The current window capture uses:
-
-```python
-PrintWindow(..., 2)
-```
-
-`2` is `PW_RENDERFULLCONTENT`
-`3` is `PW_RENDERFULLCONTENT | PW_CLIENTONLY` (might have high-DPI capture problem)
-
-The intended processing order is:
-
-```text
-physical window capture
-        ↓
-complete full-resolution image
-        ↓
-OCR preprocessing
-        ↓
-downscale when needed
-        ↓
-Tesseract
-        ↓
-login / patch / UID detection
-```
-
-`MAX_OCR_DIMENSION` limits OCR processing size; it should not limit the initial
-window capture.
-
-## UID Handling
-
-The app looks for a likely User ID token following an `id`, `1d`, or `ld`
-label.
-
-When recognized:
-
-- the UID is censored in OCR/log output;
-- the corresponding region is blacked out in the diagnostic screenshot;
-- the app treats the game as already running and exits without restarting.
-
-Diagnostic screenshots and logs should still be treated as potentially sensitive.
-
-## Game Detection and Restart
-
-The application:
-
-1. Finds Wuthering Waves processes by known process names.
-2. Finds visible top-level windows belonging to those processes.
-3. Selects the largest matching window.
-4. Captures the client area.
-5. Runs OCR.
-6. Requires consecutive detections before acting.
-7. On confirmed patch detection, terminates the matching game process(es), waits,
-   resolves the installed resource tier, and launches the selected executable again.
-
-Installation selections, the last-used game path, and the remember-selection preference are stored in:
-
-```text
-%APPDATA%\WuWaapp\wuwa_watchdog_config.json
-```
-
-## Packaging Checklist
-
-Before publishing a release:
-
-1. Run the syntax check.
-2. Build the application with `--clean`.
-3. Test the packaged executable, not only the Python source.
-4. Test patch, login, and existing-UID behavior.
-5. Test at least one display-scaling configuration above 100%.
-6. Verify Live Log and Debug Screenshot.
-7. Verify tray Quit.
-8. Verify multi-installation detection and installation selection.
-9. Verify remembered selection both enabled and disabled.
-10. Verify resource tier resolving.
-11. Verify log cleanup and versioning.
-12. Archive the complete release directory, including `_internal\`.
-
-Example:
-
-```powershell
-7z a WuWa-AutoPatchReboot-vX.Y.Z.7z .\dist\wuwa-apr\*
-```
-
-Do not distribute only the `.exe` from an `--onedir` build.
+Pull requests and issues are welcome. Run `cargo test` first. For a detection problem, include a log and, if you
+can, a screenshot (turn on *Save screenshots* in Settings > Debugging; your UID is masked).

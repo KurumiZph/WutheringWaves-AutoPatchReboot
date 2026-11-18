@@ -1,26 +1,33 @@
-# --- Generated at runtime (safe to delete, never commit) ---
+# --- Generated at runtime ---
 ocr_log.txt
 ocr_debug.png
 wuwa_watchdog_config.json
 
 # --- Python ---
 __pycache__/
-*.pyc
-*.pyo
-
-# --- Virtual environments (e.g. the test_env used for dependency testing) ---
+*.py[cod]
 venv/
 .venv/
 test_env/
 env/
 
-# --- PyInstaller build output ---
-build/
-dist/
-*.spec
+# --- Python / PyInstaller ---
+/legacy/python/build/
+/legacy/python/dist/
+/legacy/python/*.spec
+
+# --- Rust ---
+/target/
+/dist/
+**/target/
+**/*.rs.bk
 
 # --- Editor / OS cruft ---
 .vscode/
 .idea/
 Thumbs.db
 .DS_Store
+desktop.ini
+
+# --- Misc ---
+*.log
